@@ -1,0 +1,129 @@
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/defaults/DefaultReactHost.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/defaults/DefaultReactHost.kt
+index 428d715..24bb24d 100644
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/defaults/DefaultReactHost.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/defaults/DefaultReactHost.kt
+@@ -120,4 +120,10 @@ public object DefaultReactHost {
+     }
+     return reactNativeHost.toReactHost(context)
+   }
++
++    internal fun clear() {
++        println("Calling DefaultReactHost.clear()")
++        reactHost?.invalidate()
++        reactHost = null
++    }
+ }
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/defaults/DefaultReactNativeHost.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/defaults/DefaultReactNativeHost.kt
+index dac36e1..2642557 100644
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/defaults/DefaultReactNativeHost.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/defaults/DefaultReactNativeHost.kt
+@@ -21,6 +21,7 @@ import com.facebook.react.fabric.FabricUIManagerProviderImpl
+ import com.facebook.react.fabric.ReactNativeConfig
+ import com.facebook.react.uimanager.ViewManagerRegistry
+ import com.facebook.react.uimanager.ViewManagerResolver
++import com.facebook.react.defaults.DefaultReactHost
+ 
+ /**
+  * A utility class that allows you to simplify the setup of a [ReactNativeHost] for new apps in Open
+@@ -43,6 +44,11 @@ protected constructor(
+         null
+       }
+ 
++    override fun clear() {
++        super.clear()
++        DefaultReactHost.clear()
++    }
++
+   override fun getUIManagerProvider(): UIManagerProvider? =
+       if (isNewArchEnabled) {
+         UIManagerProvider { reactApplicationContext: ReactApplicationContext ->
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java
+index c951005..4c8d943 100644
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/fabric/FabricUIManager.java
+@@ -366,6 +366,13 @@ public class FabricUIManager
+     }
+   }
+ 
++  public void destroySurface(final SurfaceHandler surfaceHandler) {
++    if (surfaceHandler instanceof  SurfaceHandlerBinding) {
++      ((SurfaceHandlerBinding) surfaceHandler).destroy();
++    }
++  }
++
++
+   /** Method called when an event has been dispatched on the C++ side. */
+   @SuppressWarnings("unused")
+   public void onRequestEventBeat() {
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/fabric/SurfaceHandlerBinding.java b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/fabric/SurfaceHandlerBinding.java
+index 1dcb421..70550d8 100644
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/fabric/SurfaceHandlerBinding.java
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/fabric/SurfaceHandlerBinding.java
+@@ -130,5 +130,9 @@ public class SurfaceHandlerBinding implements SurfaceHandler {
+     setDisplayModeNative(mountable ? DISPLAY_MODE_VISIBLE : DISPLAY_MODE_SUSPENDED);
+   }
+ 
++  public void destroy() {
++    mHybridData.resetNative();
++  }
++
+   private native void setDisplayModeNative(@DisplayModeTypeDef int mode);
+ }
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/runtime/ReactHostImpl.java b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/runtime/ReactHostImpl.java
+index f105dea..abd3c35 100644
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/runtime/ReactHostImpl.java
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/runtime/ReactHostImpl.java
+@@ -256,11 +256,27 @@ public class ReactHostImpl implements ReactHost {
+             reactInstance -> {
+               log(method, "Execute");
+               reactInstance.stopSurface(surface);
++              reactInstance.destroySurface(surface);
+             },
+             mBGExecutor)
+         .makeVoid();
+   }
+ 
++  TaskInterface<Void> destroySurface(final ReactSurfaceImpl surface) {
++    final String method = "stopSurface(surfaceId = " + surface.getSurfaceID() + ")";
++    log(method, "Schedule");
++
++    detachSurface(surface);
++    return callWithExistingReactInstance(
++            method,
++            reactInstance -> {
++              log(method, "Execute");
++//              reactInstance.destroySurface(surface); I need to check if destroy on detach works better
++            },
++            mBGExecutor)
++            .makeVoid();
++  }
++
+   /**
+    * To be called when the host activity is resumed.
+    *
+@@ -1631,6 +1647,8 @@ public class ReactHostImpl implements ReactHost {
+                     }
+ 
+                     // Step 3: Stop all React Native surfaces
++                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! stopAttachedSurfaces was changed to destroy
++                    log("NOTE: Here we would normally use `stopAttachedSurfaces`. But we want to fix memory leak here.");
+                     stopAttachedSurfaces(method, reactInstance);
+                     synchronized (mAttachedSurfaces) {
+                       mAttachedSurfaces.clear();
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/runtime/ReactInstance.java b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/runtime/ReactInstance.java
+index 26fb9b9..7ebe920 100644
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/runtime/ReactInstance.java
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/runtime/ReactInstance.java
+@@ -450,6 +450,12 @@ final class ReactInstance {
+     mFabricUIManager.stopSurface(surface.getSurfaceHandler());
+   }
+ 
++  @ThreadConfined("ReactHost")
++    /* package */ void destroySurface(ReactSurfaceImpl surface) {
++    FLog.d(TAG, "destroySurface() is called with surface: " + surface.getSurfaceID());
++    mFabricUIManager.destroySurface(surface.getSurfaceHandler());
++  }
++
+   /* package */ JavaScriptContextHolder getJavaScriptContextHolder() {
+     return mJavaScriptContextHolder;
+   }
