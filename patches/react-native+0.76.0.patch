@@ -84,7 +84,6 @@ index f105dea..abd3c35 100644
    }
  
 +  TaskInterface<Void> destroySurface(final ReactSurfaceImpl surface) {
-+    // NOTE: This method has no effect. ReactHostImpl.stopSurface performs destroy. 
 +    final String method = "stopSurface(surfaceId = " + surface.getSurfaceID() + ")";
 +    log(method, "Schedule");
 +
@@ -106,7 +105,8 @@ index f105dea..abd3c35 100644
                      }
  
                      // Step 3: Stop all React Native surfaces
-+                    log("NOTE: stopping attached surfaces without dettaching them from host");
++                    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! stopAttachedSurfaces was changed to destroy
++                    log("NOTE: Here we would normally use `stopAttachedSurfaces`. But we want to fix memory leak here.");
                      stopAttachedSurfaces(method, reactInstance);
                      synchronized (mAttachedSurfaces) {
                        mAttachedSurfaces.clear();
